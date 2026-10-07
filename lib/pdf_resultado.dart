@@ -232,9 +232,9 @@ Map<String, String> valoresPlantilla(Map<String, dynamic> d) {
   v['lider'] = (cf['lider_prueba'] ?? '').toString();
   final resultado = (cf['resultado'] ?? '').toString();
   v['aprobo'] = resultado == 'Aprobado'
-      ? 'APROBADO'
+      ? 'SI'
       : resultado == 'Reprobado'
-          ? 'DESAPROBADO'
+          ? 'NO'
           : '';
 
   void dosIntentos(String clave, String prueba) {
