@@ -5,7 +5,7 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
-/// Llena la plantilla "Pruebas de Selección" (Gestión Humana) con los datos
+/// Llena la plantilla "Pruebas de Selección" (Área de Selección) con los datos
 /// de `app_resultado_pdf` y devuelve el PDF listo para imprimir o compartir.
 ///
 /// La plantilla original está en assets/plantilla_pruebas_seleccion.jpg
@@ -164,6 +164,15 @@ String _mmss(dynamic v) {
   return '${(total ~/ 60).toString().padLeft(2, '0')}:${(total % 60).toString().padLeft(2, '0')}';
 }
 
+/// Segundos → minutos con decimales (prueba de campo), ej. 750 → "12,5 min".
+String _minutos(dynamic v) {
+  final s = _num(v);
+  if (s == null) return '';
+  var t = (s / 60).toStringAsFixed(2);
+  t = t.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
+  return '${t.replaceAll('.', ',')} min';
+}
+
 String _calidad(dynamic v) {
   final t = (v ?? '').toString().trim().toLowerCase();
   if (t.isEmpty) return '';
@@ -256,7 +265,7 @@ Map<String, String> valoresPlantilla(Map<String, dynamic> d) {
 
   final pa = _m(pr['prueba_adicional']);
   v['pa_prueba'] = (pa['prueba'] ?? '').toString();
-  v['pa_t1_d'] = _mmss(pa['t1_destreza']);
+  v['pa_t1_d'] = _minutos(pa['t1_destreza']);
   v['pa_t1_c'] = _calidad(pa['t1_calidad']);
 
   final cc = _m(pr['concentracion_conteo']);

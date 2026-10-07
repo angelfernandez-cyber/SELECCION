@@ -55,7 +55,7 @@ class _ReglaPruebas {
   const _ReglaPruebas(this.fijas, this.alternativas);
 }
 
-/// Reglas de Gestión Humana:
+/// Reglas del Área de Selección:
 /// * Poscosecha: Destreza Fina, Speed Stack o Fit Brain, Concentración y
 ///   Conteo, Prueba de Campo. Hombre: + Habilidad Motora Gruesa.
 /// * Producción (cultivo): Pin Board, Destreza Fina, Speed Stack o Fit Brain o
@@ -134,6 +134,27 @@ double? _parseTime(String? raw) {
   return (mm * 60 + ss).toDouble();
 }
 
+/// Texto con coma o punto → número.
+double? _decimal(String? t) {
+  final v = (t ?? '').trim().replaceAll(',', '.');
+  return v.isEmpty ? null : double.tryParse(v);
+}
+
+/// Prueba de campo: minutos con decimales (ej. "12,5") → segundos.
+double? _minutosASegundos(String? t) {
+  final m = _decimal(t);
+  return m == null ? null : m * 60;
+}
+
+/// Segundos → minutos con decimales para mostrar (ej. 750 → "12,5").
+String _segundosAMinutos(double? s) {
+  if (s == null) return '';
+  final m = s / 60;
+  var txt = m.toStringAsFixed(2);
+  txt = txt.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
+  return txt.replaceAll('.', ',');
+}
+
 String _formatTime(double? seconds) {
   if (seconds == null) return '';
   final totalSec = seconds.round();
@@ -151,20 +172,21 @@ const _kRojo = Color(0xFFD32F2F);
 
 bool _tieneValor(dynamic v) => (v?.toString() ?? '').trim().isNotEmpty;
 
-/// Deduce qué prueba alternativa se aplicó según los datos guardados.
-String? _alternativaDe(Map<String, dynamic> r) {
+/// Cuántas pruebas alternativas se pueden elegir: dos solo en Hidroponía,
+/// una en las demás áreas.
+int _maxAlternativas(String? area) => area == 'Hidroponía' ? 2 : 1;
+
+/// Deduce qué pruebas alternativas se aplicaron según los datos guardados
+/// (pueden ser hasta dos).
+Set<String> _alternativasDe(Map<String, dynamic> r) {
   bool tiene(List<String> campos) => campos.any((c) => _tieneValor(r[c]));
-  if (tiene(['speed_stack_destreza_t1', 'speed_stack_destreza_t2'])) {
-    return 'speed_stack';
-  }
-  if (tiene(['fit_brain_velocidad_t1', 'fit_brain_velocidad_t2'])) {
-    return 'fit_brain';
-  }
-  if (tiene(['concentracion_conteo_destreza_t1']) &&
-      r['area']?.toString() != 'Poscosecha') {
-    return 'concentracion_conteo';
-  }
-  return null;
+  return {
+    if (tiene(['speed_stack_destreza_t1', 'speed_stack_destreza_t2'])) 'speed_stack',
+    if (tiene(['fit_brain_velocidad_t1', 'fit_brain_velocidad_t2'])) 'fit_brain',
+    if (tiene(['concentracion_conteo_destreza_t1']) &&
+        r['area']?.toString() != 'Poscosecha')
+      'concentracion_conteo',
+  };
 }
 
 /// Campos obligatorios de cada prueba (nombre visible → columna).
@@ -237,9 +259,9 @@ _EstadoRegistro _estadoRegistro(Map<String, dynamic> r) {
   final pruebas = <String>[];
   if (regla != null) {
     pruebas.addAll(regla.fijas);
-    final alt = _alternativaDe(r);
-    if (alt != null && regla.alternativas.contains(alt)) {
-      pruebas.add(alt);
+    final alts = _alternativasDe(r).where(regla.alternativas.contains).toList();
+    if (alts.isNotEmpty) {
+      pruebas.addAll(alts);
     } else {
       faltantes.add(
         'Prueba a aplicar (${regla.alternativas.map((k) => _kNombrePrueba[k]).join(' / ')})',
@@ -858,7 +880,8 @@ class _ResultadoFormPageState extends State<ResultadoFormPage> {
   final _cedula = TextEditingController();
   String? _area;
   String? _genero;
-  String? _alternativa;
+  /// Pruebas alternativas elegidas (hasta dos).
+  final Set<String> _alternativas = {};
   late final String _fecha;
   late final String _formador;
   late final String _liderPrueba;
@@ -962,7 +985,7 @@ class _ResultadoFormPageState extends State<ResultadoFormPage> {
       _area = r['area']?.toString();
       final genero = r['genero']?.toString();
       _genero = genero == 'Hombre' || genero == 'Mujer' ? genero : null;
-      _alternativa = _alternativaDesdeRegistro(r);
+      _alternativas.addAll(_alternativasDe(r));
 
       _pbDestrezaT1.text = _formatTime(_toDouble(r['pin_board_destreza_t1']));
       _pbDestrezaT2.text = _formatTime(_toDouble(r['pin_board_destreza_t2']));
@@ -996,8 +1019,7 @@ class _ResultadoFormPageState extends State<ResultadoFormPage> {
           _formatTime(_toDouble(r['habilidad_motora_gruesa_destreza_t1']));
       _hmgCalidadT1 = _parseCalidad(r['habilidad_motora_gruesa_calidad_t1']);
 
-      _pcDestrezaT1.text =
-          _formatTime(_toDouble(r['prueba_campo_destreza_t1']));
+      _pcDestrezaT1.text = _segundosAMinutos(_toDouble(r['prueba_campo_destreza_t1']));
       _pcCalidadT1 = _parseCalidad(r['prueba_campo_calidad_t1']);
 
       _ccDestrezaT1.text =
@@ -1052,7 +1074,7 @@ class _ResultadoFormPageState extends State<ResultadoFormPage> {
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
-    if (_aplicaReglas && _alternativa == null) {
+    if (_aplicaReglas && _alternativas.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Elige la prueba a aplicar (Speed Stack, Fit Brain…).'),
@@ -1092,13 +1114,13 @@ class _ResultadoFormPageState extends State<ResultadoFormPage> {
         speedStackDestrezaT2: si('speed_stack', _parseTime(_ssDestrezaT2.text)),
         speedStackCalidadT1: si('speed_stack', _ssCalidadT1),
         speedStackCalidadT2: si('speed_stack', _ssCalidadT2),
-        fitBrainVelocidadT1: si('fit_brain', double.tryParse(_fbVelocidadT1.text.trim().replaceAll(',', '.'))),
-        fitBrainVelocidadT2: si('fit_brain', double.tryParse(_fbVelocidadT2.text.trim().replaceAll(',', '.'))),
-        fitBrainPorcentajeT1: si('fit_brain', double.tryParse(_fbPorcentajeT1.text)),
-        fitBrainPorcentajeT2: si('fit_brain', double.tryParse(_fbPorcentajeT2.text)),
+        fitBrainVelocidadT1: si('fit_brain', _decimal(_fbVelocidadT1.text)),
+        fitBrainVelocidadT2: si('fit_brain', _decimal(_fbVelocidadT2.text)),
+        fitBrainPorcentajeT1: si('fit_brain', _decimal(_fbPorcentajeT1.text)),
+        fitBrainPorcentajeT2: si('fit_brain', _decimal(_fbPorcentajeT2.text)),
         habilidadMgrDestrezaT1: si('habilidad_motora_gruesa', _parseTime(_hmgDestrezaT1.text)),
         habilidadMgrCalidadT1: si('habilidad_motora_gruesa', _hmgCalidadT1),
-        pruebaCampoDestrezaT1: si('prueba_campo', _parseTime(_pcDestrezaT1.text)),
+        pruebaCampoDestrezaT1: si('prueba_campo', _minutosASegundos(_pcDestrezaT1.text)),
         pruebaCampoCalidadT1: si('prueba_campo', _pcCalidadT1),
         concentracionDestrezaT1: si('concentracion_conteo', _parseTime(_ccDestrezaT1.text)),
         concentracionCalidadT1: si('concentracion_conteo', _ccCalidadT1),
@@ -1110,7 +1132,10 @@ class _ResultadoFormPageState extends State<ResultadoFormPage> {
       );
       // Guarda también lo que muestra la pestaña Proceso (para el PDF).
       if (id != null) {
-        final resumen = _resumenNiveles(_resultadosProceso());
+        final resumen = _resumenNiveles(
+          _resultadosProceso(),
+          operacionesFallidas: _operacionesFallidas,
+        );
         await AppApi.guardarNiveles(
           id: id,
           niveles: resumen.json,
@@ -1181,8 +1206,7 @@ class _ResultadoFormPageState extends State<ResultadoFormPage> {
     }
     return {
       ...regla.fijas,
-      if (_alternativa != null && regla.alternativas.contains(_alternativa))
-        _alternativa!,
+      ..._alternativas.where(regla.alternativas.contains),
     };
   }
 
@@ -1191,15 +1215,20 @@ class _ResultadoFormPageState extends State<ResultadoFormPage> {
     if (_area == 'Hidroponía' && _genero == 'Mujer') _genero = null;
     final regla = _reglaActual;
     if (regla == null) return;
-    if (_alternativa != null && !regla.alternativas.contains(_alternativa)) {
-      _alternativa = null;
+    _alternativas.removeWhere((a) => !regla.alternativas.contains(a));
+    // Si cambió a un área con una sola prueba alternativa, deja solo una.
+    while (_alternativas.length > _maxAlternativas(_area)) {
+      _alternativas.remove(_alternativas.last);
     }
   }
 
-  /// Al editar, deduce qué prueba alternativa se aplicó según los datos.
-  String? _alternativaDesdeRegistro(Map<String, dynamic> r) =>
-      _alternativaDe(r);
 
+
+  /// true si alguna operación matemática (suma, resta, multiplicación o
+  /// división) quedó como "No cumple": la persona queda desaprobada.
+  bool get _operacionesFallidas =>
+      _pruebasVisibles.contains('concentracion_conteo') &&
+      [_sumaOk, _restaOk, _multOk, _divOk].any((v) => v == false);
 
   /// Mejor (menor) tiempo entre los intentos, en segundos.
   double? _mejorTiempo(String t1, [String? t2]) {
@@ -1399,6 +1428,7 @@ class _ResultadoFormPageState extends State<ResultadoFormPage> {
             _ColumnHeader(),
             const SizedBox(height: 6),
             _TrialRow(
+              minutos: true,
               label: 'T1',
               destrezaCtrl: _pcDestrezaT1,
               calidadOk: _pcCalidadT1,
@@ -1407,6 +1437,7 @@ class _ResultadoFormPageState extends State<ResultadoFormPage> {
             ),
             const SizedBox(height: 8),
             _BestRow(
+              minutos: true,
               t1Time: _pcDestrezaT1.text,
               t1Calidad: _pcCalidadT1,
             ),
@@ -1594,21 +1625,32 @@ class _ResultadoFormPageState extends State<ResultadoFormPage> {
                 area: _area!,
                 genero: _genero!,
                 cantidad: _pruebasVisibles.length,
+                total: _reglaActual!.fijas.length +
+                    (_alternativas.isEmpty ? 1 : _alternativas.length),
               ),
               const SizedBox(height: 12),
-              _AreaSelector(
-                titulo: 'Prueba a aplicar (elige una)',
-                icono: Icons.alt_route_outlined,
-                opciones: [
-                  for (final k in _reglaActual!.alternativas) _kNombrePrueba[k]!,
-                ],
-                value:
-                    _alternativa == null ? null : _kNombrePrueba[_alternativa],
-                onChanged: (nombre) => setState(() {
-                  _alternativa =
-                      _kNombrePrueba.entries
-                          .firstWhere((e) => e.value == nombre)
-                          .key;
+              _AlternativasSelector(
+                opciones: _reglaActual!.alternativas,
+                seleccion: _alternativas,
+                maximo: _maxAlternativas(_area),
+                onChanged: (k) => setState(() {
+                  final max = _maxAlternativas(_area);
+                  if (_alternativas.contains(k)) {
+                    _alternativas.remove(k);
+                  } else if (max == 1) {
+                    // Fuera de Hidroponía se elige solo una: reemplaza.
+                    _alternativas
+                      ..clear()
+                      ..add(k);
+                  } else if (_alternativas.length < max) {
+                    _alternativas.add(k);
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('En Hidroponía puedes elegir máximo 2 pruebas. Quita una para cambiarla.'),
+                      ),
+                    );
+                  }
                 }),
               ),
             ] else if (widget.record == null) ...[
@@ -1697,6 +1739,7 @@ class _ResultadoFormPageState extends State<ResultadoFormPage> {
           area: _area,
           genero: _genero,
           resultados: _resultadosProceso(),
+          operacionesFallidas: _operacionesFallidas,
         ),
       ),
         ],
@@ -1770,7 +1813,7 @@ class _ResultadoFormPageState extends State<ResultadoFormPage> {
           lista.add(_ResultadoProceso(
             prueba: k,
             area: _area,
-            tiempo: _mejorTiempo(_pcDestrezaT1.text),
+            tiempo: _minutosASegundos(_pcDestrezaT1.text),
             calidad: calidad(_pcCalidadT1),
             actitudPuntos: actitud(k),
           ));
@@ -1875,17 +1918,16 @@ class _ResumenPruebas extends StatelessWidget {
   final String area;
   final String genero;
   final int cantidad;
+  final int total;
   const _ResumenPruebas({
     required this.area,
     required this.genero,
     required this.cantidad,
+    required this.total,
   });
 
   @override
   Widget build(BuildContext context) {
-    final total = _reglasPruebas(area, genero) == null
-        ? 0
-        : _reglasPruebas(area, genero)!.fijas.length + 1;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
@@ -1995,6 +2037,8 @@ class _TrialRow extends StatelessWidget {
   final String? calidadOk;
   final ValueChanged<String?> onCalidadChanged;
   final ValueChanged<String>? onDestrezaChanged;
+  /// true = tiempo en minutos con decimales (prueba de campo).
+  final bool minutos;
 
   const _TrialRow({
     required this.label,
@@ -2002,6 +2046,7 @@ class _TrialRow extends StatelessWidget {
     required this.calidadOk,
     required this.onCalidadChanged,
     this.onDestrezaChanged,
+    this.minutos = false,
   });
 
   @override
@@ -2034,13 +2079,17 @@ class _TrialRow extends StatelessWidget {
             flex: 5,
             child: TextFormField(
               controller: destrezaCtrl,
-              keyboardType: TextInputType.number,
-              inputFormatters: [_TimeInputFormatter()],
+              keyboardType: minutos
+                  ? const TextInputType.numberWithOptions(decimal: true)
+                  : TextInputType.number,
+              inputFormatters: minutos
+                  ? [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))]
+                  : [_TimeInputFormatter()],
               onChanged: onDestrezaChanged,
-              decoration: const InputDecoration(
-                labelText: 'mm:ss',
+              decoration: InputDecoration(
+                labelText: minutos ? 'Minutos (ej. 12,5)' : 'mm:ss',
                 isDense: true,
-                suffixIcon: Icon(Icons.timer_outlined, size: 16),
+                suffixIcon: const Icon(Icons.timer_outlined, size: 16),
               ),
             ),
           ),
@@ -2063,28 +2112,33 @@ class _BestRow extends StatelessWidget {
   final String? t2Time;
   final String? t1Calidad;
   final String? t2Calidad;
+  /// true = tiempos en minutos con decimales (prueba de campo).
+  final bool minutos;
 
   const _BestRow({
     required this.t1Time,
     this.t2Time,
     required this.t1Calidad,
     this.t2Calidad,
+    this.minutos = false,
   });
 
   @override
   Widget build(BuildContext context) {
     // 1. Mejor tiempo (el menor tiempo registrado)
-    final s1 = _parseTime(t1Time);
-    final s2 = (t2Time != null && t2Time!.isNotEmpty) ? _parseTime(t2Time) : null;
+    double? leer(String? t) => minutos ? _minutosASegundos(t) : _parseTime(t);
+    String formatear(double s) => minutos ? '${_segundosAMinutos(s)} min' : _formatTime(s);
+    final s1 = leer(t1Time);
+    final s2 = (t2Time != null && t2Time!.isNotEmpty) ? leer(t2Time) : null;
 
     String bestTimeStr = '—';
     if (s1 != null && s2 != null) {
       final bestSec = s1 <= s2 ? s1 : s2;
-      bestTimeStr = _formatTime(bestSec);
+      bestTimeStr = formatear(bestSec);
     } else if (s1 != null) {
-      bestTimeStr = _formatTime(s1);
+      bestTimeStr = formatear(s1);
     } else if (s2 != null) {
-      bestTimeStr = _formatTime(s2);
+      bestTimeStr = formatear(s2);
     }
 
     // 2. Calidad combinada
@@ -2343,7 +2397,7 @@ class _FitBrainRow extends StatelessWidget {
               keyboardType:
                   const TextInputType.numberWithOptions(decimal: true),
               inputFormatters: [
-                FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+                FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]')),
               ],
               onChanged: (_) => onChanged?.call(),
               decoration: const InputDecoration(
@@ -2386,8 +2440,8 @@ class _FitBrainBestRow extends StatelessWidget {
       bestTimeStr = seg(s2);
     }
 
-    final p1 = double.tryParse(t1Porcentaje.trim());
-    final p2 = double.tryParse(t2Porcentaje.trim());
+    final p1 = _decimal(t1Porcentaje);
+    final p2 = _decimal(t2Porcentaje);
 
     String bestPctStr = '—';
     if (p1 != null && p2 != null) {
@@ -3368,7 +3422,7 @@ String _segundosTexto(String prueba, double? s) {
     return '${s.toStringAsFixed(2).replaceAll('.', ',')}″';
   }
   if (prueba == 'prueba_campo') {
-    return '${_formatTime(s)} min';
+    return '${_segundosAMinutos(s)} min';
   }
   return s % 1 == 0 ? '${s.toInt()}″  (${_formatTime(s)})' : '${s.toStringAsFixed(1)}″';
 }
@@ -3379,12 +3433,14 @@ class _ProcesoView extends StatelessWidget {
   final String? area;
   final String? genero;
   final List<_ResultadoProceso> resultados;
+  final bool operacionesFallidas;
 
   const _ProcesoView({
     required this.nombre,
     required this.area,
     required this.genero,
     required this.resultados,
+    this.operacionesFallidas = false,
   });
 
   @override
@@ -3442,6 +3498,7 @@ class _ProcesoView extends StatelessWidget {
                   cantidad: niveles.length,
                   evaluadas: nivelesPruebas.length,
                   total: resultados.length,
+                  operacionesFallidas: operacionesFallidas,
                 ),
                 const SizedBox(height: 12),
                 const _LeyendaNiveles(),
@@ -3474,6 +3531,7 @@ class _ResumenProceso extends StatelessWidget {
   final int cantidad;
   final int evaluadas;
   final int total;
+  final bool operacionesFallidas;
   const _ResumenProceso({
     required this.nombre,
     required this.area,
@@ -3483,13 +3541,14 @@ class _ResumenProceso extends StatelessWidget {
     required this.cantidad,
     required this.evaluadas,
     required this.total,
+    this.operacionesFallidas = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    // Aprobado si el promedio es 3 o más.
-    final aprobado = promedio != null && promedio! >= 3;
-    final color = promedio == null
+    // Aprobado si el promedio es 3 o más y no falló ninguna operación.
+    final aprobado = promedio != null && promedio! >= 3 && !operacionesFallidas;
+    final color = (promedio == null && !operacionesFallidas)
         ? const Color(0xFF90A4AE)
         : (aprobado ? const Color(0xFF2E7D32) : const Color(0xFFC62828));
     return Container(
@@ -3530,6 +3589,20 @@ class _ResumenProceso extends StatelessWidget {
                     style: const TextStyle(color: Colors.white70, fontSize: 12),
                   ),
                 ],
+                if (operacionesFallidas) ...[
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFC62828),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Text(
+                      'Desaprobado: no cumplió una operación matemática',
+                      style: TextStyle(color: Colors.white, fontSize: 11.5, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -3565,7 +3638,9 @@ class _ResumenProceso extends StatelessWidget {
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
-                    promedio == null ? 'Sin datos' : (aprobado ? 'APROBADO' : 'DESAPROBADO'),
+                    (promedio == null && !operacionesFallidas)
+                        ? 'Sin datos'
+                        : (aprobado ? 'APROBADO' : 'DESAPROBADO'),
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                       color: Colors.white,
@@ -3909,7 +3984,10 @@ class _ResumenNiveles {
   const _ResumenNiveles(this.json, this.promedio, this.resultado);
 }
 
-_ResumenNiveles _resumenNiveles(List<_ResultadoProceso> resultados) {
+_ResumenNiveles _resumenNiveles(
+  List<_ResultadoProceso> resultados, {
+  bool operacionesFallidas = false,
+}) {
   final niveles = <int>[
     for (final r in resultados)
       if (r.nivel != null) r.nivel!,
@@ -3918,8 +3996,11 @@ _ResumenNiveles _resumenNiveles(List<_ResultadoProceso> resultados) {
   ];
   final suma = niveles.fold<int>(0, (a, b) => a + b);
   final promedio = niveles.isEmpty ? null : suma / niveles.length;
-  final resultado =
-      promedio == null ? null : (promedio >= 3 ? 'Aprobado' : 'Reprobado');
+  // Si no cumplió alguna operación matemática queda desaprobado sin importar
+  // el promedio.
+  final resultado = operacionesFallidas
+      ? 'Reprobado'
+      : (promedio == null ? null : (promedio >= 3 ? 'Aprobado' : 'Reprobado'));
 
   final pruebas = <String, dynamic>{
     for (final r in resultados)
@@ -3945,6 +4026,7 @@ _ResumenNiveles _resumenNiveles(List<_ResultadoProceso> resultados) {
       'orden': [for (final r in resultados) r.prueba],
       'suma': suma,
       'cantidad': niveles.length,
+      'operaciones_no_cumplidas': operacionesFallidas,
       'promedio': promedio,
       'resultado': resultado,
       'calculado_en': DateTime.now().toIso8601String(),
@@ -4187,4 +4269,87 @@ class _DialogoFaltantes extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Selector de pruebas alternativas: se pueden marcar hasta dos.
+class _AlternativasSelector extends StatelessWidget {
+  final List<String> opciones;
+  final Set<String> seleccion;
+  final int maximo;
+  final ValueChanged<String> onChanged;
+  const _AlternativasSelector({
+    required this.opciones,
+    required this.seleccion,
+    required this.maximo,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) => Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: seleccion.isEmpty ? const Color(0xFFEF6C00) : const Color(0xFFBBD0F0),
+          ),
+        ),
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.alt_route_outlined, size: 18, color: _kBlue),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    maximo > 1 ? 'Pruebas a aplicar' : 'Prueba a aplicar',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 14,
+                      color: Color(0xFF0D3B82),
+                    ),
+                  ),
+                ),
+                Text(
+                  '${seleccion.length} / $maximo',
+                  style: const TextStyle(color: _kBlue, fontWeight: FontWeight.w800),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              maximo > 1 ? 'Elige una o dos pruebas.' : 'Elige una prueba.',
+              style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600),
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final k in opciones)
+                  FilterChip(
+                    avatar: Icon(
+                      _kIconoPrueba[k],
+                      size: 18,
+                      color: seleccion.contains(k) ? Colors.white : _kBlue,
+                    ),
+                    label: Text(_kNombrePrueba[k]!),
+                    selected: seleccion.contains(k),
+                    showCheckmark: false,
+                    selectedColor: _kBlue,
+                    labelStyle: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      color: seleccion.contains(k) ? Colors.white : const Color(0xFF0D3B82),
+                    ),
+                    side: BorderSide(
+                      color: seleccion.contains(k) ? _kBlue : const Color(0xFFBBD0F0),
+                    ),
+                    onSelected: (_) => onChanged(k),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      );
 }

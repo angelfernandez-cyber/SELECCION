@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import 'app_api.dart';
@@ -9,8 +10,9 @@ const _kAzul = Color(0xFF1565C0);
 const _kVerde = Color(0xFF2E7D32);
 const _kRojo = Color(0xFFC62828);
 
-/// Módulo Respaldo: descarga una copia (JSON) de los resultados de pruebas y,
-/// solo después de respaldar, permite eliminarlos de Supabase.
+/// Módulo Respaldo: descarga una copia (JSON) de los resultados de pruebas,
+/// permite eliminarlos de Supabase (solo después de respaldar) y cargar un
+/// respaldo JSON para recuperar la información.
 class RespaldoPage extends StatefulWidget {
   const RespaldoPage({super.key});
   @override
@@ -244,6 +246,78 @@ class _RespaldoPageState extends State<RespaldoPage> {
     }
   }
 
+  // ─── Cargar respaldo (recuperar) ───────────────────────────────────────
+  Future<void> _cargarJson() async {
+    if (!_permitido || _trabajando) return;
+    FilePickerResult? pick;
+    try {
+      pick = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['json'],
+        withData: true,
+      );
+    } catch (e) {
+      _mensaje('No se pudo abrir el archivo: $e', error: true);
+      return;
+    }
+    final archivo = pick?.files.single;
+    if (archivo == null) return;
+    final bytes = archivo.bytes;
+    if (bytes == null) {
+      _mensaje('No se pudo leer el archivo seleccionado.', error: true);
+      return;
+    }
+
+    List<dynamic> datos;
+    String? fechaRespaldo;
+    try {
+      final decoded = jsonDecode(utf8.decode(bytes));
+      if (decoded is Map && decoded['datos'] is List) {
+        datos = decoded['datos'] as List;
+        fechaRespaldo = decoded['fecha_respaldo']?.toString();
+      } else if (decoded is List) {
+        datos = decoded;
+      } else {
+        throw const FormatException();
+      }
+      if (datos.any((r) => r is! Map || r['id'] == null)) throw const FormatException();
+    } catch (_) {
+      _mensaje('El archivo no es un respaldo válido de SELECCIOM.', error: true);
+      return;
+    }
+    if (datos.isEmpty) {
+      _mensaje('El respaldo no tiene resultados.');
+      return;
+    }
+    if (!mounted) return;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => _ConfirmarCarga(
+        archivo: archivo.name,
+        registros: datos.length,
+        fecha: fechaRespaldo,
+      ),
+    );
+    if (ok != true) return;
+
+    setState(() => _trabajando = true);
+    try {
+      final r = await AppApi.restaurarRegistros(datos);
+      final ins = (r['insertados'] as num?)?.toInt() ?? 0;
+      final omi = (r['omitidos'] as num?)?.toInt() ?? 0;
+      _mensaje(omi > 0
+          ? 'Respaldo cargado: $ins resultados recuperados, $omi ya existían.'
+          : 'Respaldo cargado: $ins resultados recuperados.');
+      await _contar();
+    } catch (e) {
+      _mensaje('No se pudo cargar el respaldo: ${e.toString().replaceFirst('Exception: ', '')}',
+          error: true);
+    } finally {
+      if (mounted) setState(() => _trabajando = false);
+    }
+  }
+
   // ─── Eliminación ───────────────────────────────────────────────────────
   Future<void> _eliminar() async {
     if (!_respaldoListo || _trabajando) return;
@@ -424,6 +498,22 @@ class _RespaldoPageState extends State<RespaldoPage> {
                 ),
                 bloqueado: !_respaldoListo,
               ),
+              _paso(
+                3,
+                'Cargar respaldo',
+                'Recupera la información desde un archivo JSON descargado antes. '
+                    'Solo se agregan los resultados que no existen; los que ya están no se duplican.',
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size.fromHeight(46),
+                    foregroundColor: _kAzul,
+                    side: const BorderSide(color: _kAzul, width: 1.4),
+                  ),
+                  onPressed: _trabajando ? null : _cargarJson,
+                  icon: const Icon(Icons.upload_file_outlined),
+                  label: const Text('Cargar respaldo JSON'),
+                ),
+              ),
             ],
           ),
         ),
@@ -485,4 +575,64 @@ class _ConfirmarEliminarState extends State<_ConfirmarEliminar> {
           ),
         ],
       );
+}
+
+/// Confirmación antes de cargar un respaldo.
+class _ConfirmarCarga extends StatelessWidget {
+  final String archivo;
+  final int registros;
+  final String? fecha;
+  const _ConfirmarCarga({required this.archivo, required this.registros, this.fecha});
+
+  String? get _fechaTexto {
+    final d = DateTime.tryParse(fecha ?? '');
+    if (d == null) return null;
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${two(d.day)}/${two(d.month)}/${d.year} ${two(d.hour)}:${two(d.minute)}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    Widget fila(IconData i, String t, String v) => Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(i, size: 18, color: _kAzul),
+              const SizedBox(width: 8),
+              Text('$t: ', style: TextStyle(color: Colors.blueGrey.shade700)),
+              Expanded(
+                child: Text(v, style: const TextStyle(fontWeight: FontWeight.w700)),
+              ),
+            ],
+          ),
+        );
+    return AlertDialog(
+      icon: const Icon(Icons.upload_file_outlined, color: _kAzul, size: 40),
+      title: const Text('Cargar respaldo'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          fila(Icons.description_outlined, 'Archivo', archivo),
+          if (_fechaTexto != null) fila(Icons.event_outlined, 'Fecha del respaldo', _fechaTexto!),
+          fila(Icons.data_object, 'Resultados', '$registros'),
+          const SizedBox(height: 14),
+          Text(
+            'Se agregarán a Supabase los resultados que no existan. '
+            'Los que ya están guardados no se modifican ni se duplican.',
+            style: TextStyle(color: Colors.blueGrey.shade700, height: 1.35),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+        FilledButton.icon(
+          onPressed: () => Navigator.pop(context, true),
+          icon: const Icon(Icons.upload),
+          label: const Text('Cargar'),
+        ),
+      ],
+    );
+  }
 }

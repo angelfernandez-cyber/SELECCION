@@ -449,7 +449,7 @@ class _HomePageState extends State<HomePage> {
                         const SizedBox(height: 28),
                         Center(
                           child: Text(
-                            'Cultivos La Planicie S.A.S. · Gestión Humana',
+                            'Cultivos La Planicie S.A.S. · Área de Selección',
                             style: TextStyle(fontSize: 12, color: Colors.blueGrey.shade400),
                           ),
                         ),

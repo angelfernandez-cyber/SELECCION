@@ -147,7 +147,7 @@ class _LoginPageState extends State<LoginPage> {
               borderRadius: BorderRadius.circular(20),
             ),
             child: Text(
-              'Gestión Humana · Pruebas de Selección',
+              'Área de Selección · Pruebas de Selección',
               style: TextStyle(
                 fontSize: 12.5,
                 fontWeight: FontWeight.w600,

@@ -252,6 +252,16 @@ class AppApi {
         .toList();
   }
 
+  /// Restaura resultados desde un respaldo JSON. Inserta solo los que no
+  /// existen (por id). Devuelve {total, insertados, omitidos}.
+  static Future<Map<String, dynamic>> restaurarRegistros(List<dynamic> datos) async {
+    final result = await rpc('app_restaurar_resultados', {
+      ...credenciales,
+      'p_datos': datos,
+    });
+    return Map<String, dynamic>.from(result as Map);
+  }
+
   /// Almacenamiento de la base de datos en Supabase (usado, límite del plan…).
   static Future<Map<String, dynamic>> almacenamiento() async {
     final result = await rpc('app_almacenamiento', credenciales);
